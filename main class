@@ -1,0 +1,64 @@
+int main() {
+    // Initialize MediaPipe
+    ::mediapipe::CalculatorGraphConfig config;
+    config = ::mediapipe::ParseTextOrDie(R"(
+        input_stream: "input_video"
+        output_stream: "output_video"
+        node {
+            calculator: "HandTrackingCalculator"
+            input_stream: "input_video"
+            output_stream: "output_video"
+        })");
+
+    ::mediapipe::CalculatorGraph graph;
+    MP_RETURN_IF_ERROR(graph.Initialize(config));
+
+    // Open webcam
+    cv::VideoCapture capture(0);
+    if (!capture.isOpened()) {
+        std::cerr << "Error: Could not open webcam." << std::endl;
+        return 1;
+    }
+
+    cv::Mat frame;
+    while (true) {
+        // Read a frame from the webcam
+        capture >> frame;
+        if (frame.empty()) {
+            break;
+        }
+
+        // Convert OpenCV Mat to MediaPipe ImageFrame
+        auto input_frame = absl::make_unique<::mediapipe::ImageFrame>(
+            ::mediapipe::ImageFormat::SRGB, frame.cols, frame.rows,
+            ::mediapipe::ImageFrame::kDefaultAlignmentBoundary);
+        cv::Mat input_frame_mat = ::mediapipe::formats::MatView(input_frame.get());
+        frame.copyTo(input_frame_mat);
+
+        // Prepare input packet
+        ::mediapipe::Packet input_packet = ::mediapipe::Adopt(input_frame.release());
+
+        // Process the frame
+        ::mediapipe::Packet output_packet;
+        MP_RETURN_IF_ERROR(graph.AddPacketToInputStream("input_video", input_packet));
+        if (!graph.Run(&output_packet)) {
+            break;
+        }
+
+        // Retrieve processed frame from output packet
+        cv::Mat output_frame = ::mediapipe::formats::MatView(&output_packet);
+
+        // Display the frame with hand landmarks
+        cv::imshow("Hand Tracking", output_frame);
+
+        // Exit the loop on 'q' key press
+        if (cv::waitKey(1) == 'q') {
+            break;
+        }
+    }
+
+    // Release resources and exit
+    capture.release();
+    cv::destroyAllWindows();
+    return 0;
+}
