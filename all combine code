@@ -1,0 +1,122 @@
+#include <iostream>
+#include <cstdlib>
+#include <opencv2/opencv.hpp>
+#include "mediapipe/framework/calculator_framework.h"
+#include "mediapipe/framework/formats/image_frame.h"
+#include "mediapipe/framework/formats/landmark.pb.h"
+
+namespace mediapipe {
+
+// Define a custom calculator for hand tracking
+class HandTrackingCalculator : public CalculatorBase {
+ public:
+  HandTrackingCalculator() {}
+  static ::mediapipe::Status GetContract(CalculatorContract* cc) {
+    // Input video stream
+    cc->Inputs().Tag("INPUT_VIDEO").Set<ImageFrame>();
+
+    // Output video stream with hand landmarks
+    cc->Outputs().Tag("OUTPUT_VIDEO").Set<ImageFrame>();
+
+    return ::mediapipe::OkStatus();
+  }
+
+  ::mediapipe::Status Open(CalculatorContext* cc) override {
+    options_ = cc->Options<::mediapipe::HandTrackingCalculatorOptions>();
+    return ::mediapipe::OkStatus();
+  }
+
+  ::mediapipe::Status Process(CalculatorContext* cc) override {
+    const ImageFrame& input_frame = cc->Inputs().Tag("INPUT_VIDEO").Get<ImageFrame>();
+
+    // Process input_frame using MediaPipe Hand Tracking
+    // ...
+    
+    // Create an output ImageFrame with hand landmarks drawn
+    cv::Mat output_mat;
+    // Draw hand landmarks on output_mat
+    // ...
+
+    auto output_frame = absl::make_unique<ImageFrame>(
+        ImageFormat::SRGB, output_mat.cols, output_mat.rows,
+        ImageFrame::kDefaultAlignmentBoundary);
+    cv::Mat output_frame_mat = formats::MatView(output_frame.get());
+    output_mat.copyTo(output_frame_mat);
+
+    cc->Outputs().Tag("OUTPUT_VIDEO").Add(output_frame.release(), cc->InputTimestamp());
+
+    return ::mediapipe::OkStatus();
+  }
+
+ private:
+  ::mediapipe::HandTrackingCalculatorOptions options_;
+};
+
+REGISTER_CALCULATOR(HandTrackingCalculator);
+
+}  // namespace mediapipe
+
+int main() {
+    // Initialize MediaPipe
+    ::mediapipe::CalculatorGraphConfig config;
+    config = ::mediapipe::ParseTextOrDie(R"(
+        input_stream: "input_video"
+        output_stream: "output_video"
+        node {
+            calculator: "HandTrackingCalculator"
+            input_stream: "input_video"
+            output_stream: "output_video"
+        })");
+
+    ::mediapipe::CalculatorGraph graph;
+    MP_RETURN_IF_ERROR(graph.Initialize(config));
+
+    // Open webcam
+    cv::VideoCapture capture(0);
+    if (!capture.isOpened()) {
+        std::cerr << "Error: Could not open webcam." << std::endl;
+        return 1;
+    }
+
+    cv::Mat frame;
+    while (true) {
+        // Read a frame from the webcam
+        capture >> frame;
+        if (frame.empty()) {
+            break;
+        }
+
+        // Convert OpenCV Mat to MediaPipe ImageFrame
+        auto input_frame = absl::make_unique<::mediapipe::ImageFrame>(
+            ::mediapipe::ImageFormat::SRGB, frame.cols, frame.rows,
+            ::mediapipe::ImageFrame::kDefaultAlignmentBoundary);
+        cv::Mat input_frame_mat = ::mediapipe::formats::MatView(input_frame.get());
+        frame.copyTo(input_frame_mat);
+
+        // Prepare input packet
+        ::mediapipe::Packet input_packet = ::mediapipe::Adopt(input_frame.release());
+
+        // Process the frame
+        ::mediapipe::Packet output_packet;
+        MP_RETURN_IF_ERROR(graph.AddPacketToInputStream("input_video", input_packet));
+        if (!graph.Run(&output_packet)) {
+            break;
+        }
+
+        // Retrieve processed frame from output packet
+        cv::Mat output_frame = ::mediapipe::formats::MatView(&output_packet);
+
+        // Display the frame with hand landmarks
+        cv::imshow("Hand Tracking", output_frame);
+
+        // Exit the loop on 'q' key press
+        if (cv::waitKey(1) == 'q') {
+            break;
+        }
+    }
+
+    // Release resources and exit
+    capture.release();
+    cv::destroyAllWindows();
+    return 0;
+}
